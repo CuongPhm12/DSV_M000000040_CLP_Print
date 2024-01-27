@@ -1,0 +1,663 @@
+<%@page import="java.util.*"%>
+<%@page import="java.sql.*"%>
+<%@page import="java.net.*"%>
+<%@page import="java.io.*"%>
+<%@page import="java.text.SimpleDateFormat"%>
+<%@page import="java.util.Calendar"%>
+<%@page import="com.google.gson.Gson"%>
+<%@page import="java.sql.DriverManager"%>
+<%@page import="java.sql.SQLException"%>
+<%@page import="org.json.JSONArray"%>
+<%@page import="org.json.JSONObject"%>
+<%@page import="org.slf4j.Logger"%>
+<%@page import="org.slf4j.LoggerFactory"%>
+
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%@ include file="/WEB-INF/views/ajax/M000000001.jsp" %>
+<%
+    Logger logger = LoggerFactory.getLogger(getClass());
+
+    String header = (String)request.getParameter("header");
+    String detail = (String)request.getParameter("detail");
+    String sdetail = (String)request.getParameter("sdetail");
+    String type = (String)request.getParameter("type");
+
+    String driver = "org.mariadb.jdbc.Driver";
+    String url = "jdbc:mariadb://localhost:3306/simbizlocal?useUnicode=true&characterEncoding=UTF-8&characterSetResults=UTF-8";
+
+    String sLine = "";
+    String sText = "";
+    String user = "root";
+    String password = "tlaqlwm2174";
+
+    JSONObject jsonObj = new JSONObject();
+    String PassText = null;
+    String sql = "";
+    java.sql.Connection conn = null;
+    java.sql.PreparedStatement pstmt = null;
+    ResultSet rs = null;
+    Statement stmt = null;
+
+    try {
+        try {
+            Class.forName(driver);
+            conn = DriverManager.getConnection(url, user, password);
+            conn.setAutoCommit(false);
+
+            if ( type.equals("insert") || type.equals("edit") ) {}
+
+            if ( type.equals("delete") ) {
+            
+                Gson gson = new Gson();
+                String columns = getSOrder(conn, "SELECT GROUP_CONCAT(COLUMN_NAME SEPARATOR ', ') AS column_names FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'simbizlocal' AND TABLE_NAME = 'tb_store' ");                            
+                if(header != null){
+                    List<Map> list = gson.fromJson(header, List.class);
+                    for(int i = 0 ; i < list.size() ; i ++){
+                        Map<String, String> row = getRow(conn, "simbizlocal", "tb_store_master", list.get(i));
+                        
+                        if (!checkEmpty(list.get(i).get("master_no"))){
+                        
+                        
+                        Iterator<String> keys = row.keySet().iterator();
+                        while(keys.hasNext()){
+                            String key = keys.next();
+                            
+                            if ( row.get(key) != null) {                        
+                                String value = row.get(key);
+                                if (!sqlCoumns.equals("")) { sqlCoumns += ", "; }
+                                sqlCoumns += key;
+                                if (!sqlValues.equals("")) { sqlValues += ", "; }
+                                sqlValues += value;
+                                // 기본키 제외 duplicate sql 만들기
+		                        // !key.equals("**"), **에 PK + !key.equals("createuser") && !key.equals("createdate")
+                                if (!key.equals("store_id") && !key.equals("createuser") && !key.equals("createdate")) {
+                                    if (!sqlDuplis.equals("")) { sqlDuplis += ", "; }
+                                    sqlDuplis += (key + "=" + value);
+                                }
+                            }
+                        }                        
+                        
+                           //sql =  " update tb_store set use_yn = 'N' where item_cd = " + row.get("item_cd");
+                           
+                            sql = "insert into tb_store_log(log_type, log_date, " + columns + ") ";
+                            sql += "select 'D' log_type, now() log_date, " + columns + " ";
+                            sql += "from tb_store where invoice_no = " + row.get("invoice_no");
+                            logger.info("insert into tb_store_log");
+                            pstmt = conn.prepareStatement(sql);
+                            pstmt.executeUpdate();                           
+                        
+                            //delete req
+                            sql =  " delete from tb_store_master where master_no = " + row.get("master_no");
+                            
+                            // + "' and release status != 'Y'";
+                            
+                            logger.info("delete into tb_store_master");
+                            logger.info(sql);
+                            pstmt = conn.prepareStatement(sql);
+                            pstmt.executeUpdate();
+                            addHistory(sql);
+                            
+                            sql = "update tb_store set master_no = null where master_no = " + row.get("master_no");
+                            logger.info("delete into tb_store");
+                            logger.info(sql);
+                            pstmt = conn.prepareStatement(sql);
+                            pstmt.executeUpdate();
+                            addHistory(sql);                            
+                        }
+                    }
+                }
+                
+                PassText = "삭제되었습니다.";
+                jsonObj.put("result", PassText);
+                PassText = jsonObj.toString();
+                out.write(PassText);
+                out.flush();
+                conn.commit();
+                logger.info("!!!!COMMIT DONE!!!!");
+            
+
+            }
+            if ( type.equals("cust_btn1") ) {
+                String errorMsg = "";
+                
+                Gson gson = new Gson();
+                //String charge_weight = "";
+                //String qty = "";
+                String master_no = "";
+                
+                if(header != null){
+                    List<Map> list = gson.fromJson(header, List.class);
+                    for(int i = 0 ; i < list.size() ; i ++){
+                        Map<String, String> row = getRow(conn, "simbizlocal", "tb_store_master", list.get(i));
+                        
+                        master_no = row.get("master_no");
+                        
+                        /*String cntDup = getSOrder(conn, " select count(*) from tb_ma_ship_delv where id = " +  row.get("id") + " ");
+                        if(!cntDup.equals("0")) {
+                            errorMsg += "<br/>기간중복 - [" + list.get(i).get("id") + "] " + " ";
+                        }*/
+                        row.put("mail_send_yn", "'N'");
+                        row.put("release_request", "'대기'");
+                        String cnt = getSOrder(conn, " select count(*) cnt from tb_store_master where master_no = " + row.get("master_no"));
+                        
+                        boolean isInsert = false;
+                        if(cnt.equals("0")){
+                            isInsert = true;
+                        }
+
+                        
+                        Iterator<String> keys = row.keySet().iterator();
+                        while(keys.hasNext()){
+                            String key = keys.next();
+                            if ( row.get(key) != null) {                        
+                                String value = row.get(key);
+                                if (!isInsert || isInsert && !key.equals("id")) {
+                                    if (!sqlCoumns.equals("")) { sqlCoumns += ", "; }
+                                    sqlCoumns += key;
+                                    if (!sqlValues.equals("")) { sqlValues += ", "; }
+                                    if (key.equals("use_yn") && value.equals("NULL")) {
+                                    sqlValues += "'Y'";
+                                } else {
+                                    sqlValues += value;
+                                }
+                                }
+                                // 기본키 제외 duplicate sql 만들기
+                                if (!key.equals("master_no") && !key.equals("createuser") && !key.equals("createdate")) {
+                                    if (!sqlDuplis.equals("")) { sqlDuplis += ", "; }
+                                    sqlDuplis += (key + "=" + value);
+                                }
+                            }
+                        }
+                        
+                        if(isInsert) {
+                            sql =  " insert into tb_store_master (" + sqlCoumns + ") VALUES (" + sqlValues + ") ";
+                        }
+                        else {
+                            sql =  " insert into tb_store_master (" + sqlCoumns + ") VALUES (" + sqlValues + ") on duplicate key update " + sqlDuplis;
+                        }
+                        logger.info("insert into tb_store_master");
+                        logger.info(sql);
+                        pstmt = conn.prepareStatement(sql);
+                        pstmt.executeUpdate();
+                        
+                        sql = " update tb_store_master set mail_send_yn = 'N' where master_no = " + row.get("master_no");
+                    }
+                }
+                if(detail != null){
+                    List<Map> list = gson.fromJson(detail, List.class);
+                    //int qty = 0;
+                    //int cwt = 0;
+                    for(int i = 0 ; i < list.size() ; i ++){
+                        Map<String, String> row = getRow(conn, "simbizlocal", "tb_store", list.get(i));
+                        
+
+                        sql  = "update tb_store set master_no = " + master_no + "";
+                        sql += " where invoice_no = " + row.get("invoice_no");
+                        //if(master_no != null){
+                        //    throw new Exception(sql);
+                        //}
+                        //qty += row.get("total_qty");
+                        //cwt += row.get("charge_weight");
+                        logger.info("update into tb_store");
+                        logger.info(sql);
+                        pstmt = conn.prepareStatement(sql);
+                        pstmt.executeUpdate();
+   
+                    }
+                    sql = " update tb_store_master a set a.qty_sum = (SELECT ifnull(SUM(total_qty),0) FROM tb_store WHERE master_no = a.master_no),";
+                    sql += " a.cwt_sum = (SELECT ifnull(SUM(charge_weight),0) FROM tb_store WHERE master_no = a.master_no)  where a.master_no = " + master_no;
+                    
+                    logger.info("update into tb_store_master");
+                    logger.info(sql);
+                    pstmt = conn.prepareStatement(sql);
+                    pstmt.executeUpdate();                    
+                    
+                    
+                }                
+                if(!errorMsg.equals("")) {
+                    throw new Exception(errorMsg);
+                }
+
+                PassText = "저장되었습니다.";
+                jsonObj.put("result", PassText);
+                PassText = jsonObj.toString();
+                out.write(PassText);
+                out.flush();
+                conn.commit();
+                logger.info("!!!!COMMIT DONE!!!!");
+            }
+            if ( type.equals("get_data") ) {        
+                Gson gson = new Gson();
+                if(header != null){
+                    JSONObject searchValue = new JSONObject(header);
+                    String masterNo = searchValue.getString("masterNo").toString();
+                            String dataSql1 = "";
+                            dataSql1 +="select * from tb_store_master ";
+                            dataSql1 +="WHERE 1 = 1 ";
+                            dataSql1 +="AND master_no = '"+masterNo+"' order by createdate desc";
+                
+                List<Map<String, Object>> master_data = selectAllQuery(conn,dataSql1);
+                
+                String dataSql ="";
+                dataSql +=" Select ";
+                dataSql +=" store.store_id, ";
+                dataSql +=" store.master_no, ";
+                dataSql +=" store.hawb_no, ";
+                dataSql +=" store.invoice_no, ";
+                dataSql +=" store.po_no, ";
+                dataSql +=" store.group_no, ";
+                dataSql +=" case when store.store_status = 'N' then '대기' else '입고' end as store_status, ";
+                dataSql +=" store.store_date, ";
+                dataSql +=" store.stock_status, ";
+                dataSql +=" store.shipper,  ";
+                dataSql +=" store.consignee,  ";
+                dataSql +=" store.destination,  ";
+                dataSql +=" store.total_qty,  ";
+                dataSql +=" store.total_weight,  ";
+                dataSql +=" store.volume, ";
+                dataSql +=" store.charge_weight, ";
+                dataSql +=" store.dom_transport, ";
+                dataSql +=" store.dom_transport_date, ";
+                dataSql +=" store.customsparty, ";
+                dataSql +=" store.shipment, ";
+                dataSql +=" store.shipping_mark_level, ";
+                dataSql +=" store.dsv_contact, ";
+                dataSql +=" store.notes, ";
+                dataSql +=" store.volume_weight ";
+                dataSql +=" from tb_store store ";
+                dataSql +=" join tb_store_master master on store.master_no = master.master_no "; -- and store.invoice_no = master.invoice_no
+                dataSql +=" where 1 = 1 ";
+                dataSql +=" and store.master_no = '"+masterNo+"' ";
+                dataSql +=" and store_status = 'Y' ";
+                dataSql +=" and ifnull(stock_status, '') != '장기보관' ";
+                dataSql +=" and ifnull(store.release_status, '') != 'N' ";
+                dataSql +=" order by dom_transport_date desc ";
+                
+                List<Map<String, Object>> detail_data = selectAllQuery(conn, dataSql);
+                
+                Map<String, Object> response_data = new HashMap<>();
+                response_data.put("res_master", master_data);
+                response_data.put("res_detail", detail_data);
+                response_data.put("sql1", dataSql1);
+                response_data.put("sql", dataSql);
+                
+              String jsonString = new Gson().toJson(response_data);
+                      out.print(jsonString);
+                }
+            }            
+            if ( type.equals("cust_btn2") ) {}
+            if ( type.equals("cust_btn3") ) {
+                        String errorMsg = "";
+                    
+                        Gson gson = new Gson();
+                        
+                        //String master_no = "";
+                        
+                        if(header != null){
+                            List<Map> list = gson.fromJson(header, List.class);
+                            for(int i = 0 ; i < list.size() ; i ++){
+                                Map<String, String> row = getRow(conn, "simbizlocal", "tb_store_master", list.get(i));
+                                
+                                
+                                /*String cntDup = getSOrder(conn, " select count(*) from tb_ma_ship_delv where id = " +  row.get("id") + " ");
+                                if(!cntDup.equals("0")) {
+                                    errorMsg += "<br/>기간중복 - [" + list.get(i).get("id") + "] " + " ";
+                                }*/
+                                row.put("release_request", "출고요청");
+                                //String cnt = getSOrder(conn, " select count(*) cnt from tb_store_master where master_no = " + row.get("master_no"));
+                                
+                                sql = "update tb_store_master set release_request = '출고요청'";
+                                sql += " where master_no = " + row.get("master_no");
+                                
+                                logger.info("insert into tb_store_master");
+                                logger.info(sql);
+                                pstmt = conn.prepareStatement(sql);
+                                pstmt.executeUpdate();
+                                
+                                sql = " update tb_store set release_request = '출고요청'";
+                                sql += " where master_no = " + row.get("master_no");
+                                pstmt = conn.prepareStatement(sql);
+                                pstmt.executeUpdate();                                
+                            }
+                        }
+                        if(detail != null){}                
+                        if(!errorMsg.equals("")) {
+                            throw new Exception(errorMsg);
+                        }
+        
+                        PassText = "저장되었습니다.";
+                        jsonObj.put("result", PassText);
+                        PassText = jsonObj.toString();
+                        out.write(PassText);
+                        out.flush();
+                        conn.commit();
+                        logger.info("!!!!COMMIT DONE!!!!");
+            }
+            if ( type.equals("cust_btn4") ) {
+                        String errorMsg = "";
+                    
+                        Gson gson = new Gson();
+                        
+                        //String master_no = "";
+                        
+                        if(header != null){
+                            List<Map> list = gson.fromJson(header, List.class);
+                            for(int i = 0 ; i < list.size() ; i ++){
+                                Map<String, String> row = getRow(conn, "simbizlocal", "tb_store_master", list.get(i));
+                                
+                                //master_no = row.get("master_no");
+                                
+                                /*String cntDup = getSOrder(conn, " select count(*) from tb_ma_ship_delv where id = " +  row.get("id") + " ");
+                                if(!cntDup.equals("0")) {
+                                    errorMsg += "<br/>기간중복 - [" + list.get(i).get("id") + "] " + " ";
+                                }*/
+                                row.put("release_request", "반송요청");
+                                //String cnt = getSOrder(conn, " select count(*) cnt from tb_store_master where master_no = " + row.get("master_no"));
+                                
+                                sql = "update tb_store_master set release_request = '반송요청'";
+                                sql += " where master_no = " + row.get("master_no");
+                                
+                                logger.info("insert into tb_store_master");
+                                logger.info(sql);
+                                pstmt = conn.prepareStatement(sql);
+                                pstmt.executeUpdate();
+                                
+                                sql = " update tb_store set release_request = '반송요청'";
+                                sql += " where master_no = " + row.get("master_no");
+                                pstmt = conn.prepareStatement(sql);
+                                pstmt.executeUpdate();                                            
+                            }
+                        }
+                        if(detail != null){}                
+                        if(!errorMsg.equals("")) {
+                            throw new Exception(errorMsg);
+                        }
+        
+                        PassText = "저장되었습니다.";
+                        jsonObj.put("result", PassText);
+                        PassText = jsonObj.toString();
+                        out.write(PassText);
+                        out.flush();
+                        conn.commit();
+                        logger.info("!!!!COMMIT DONE!!!!");
+            }
+            
+            if ( type.equals("cust_btn6") ) {
+                
+                
+                Gson gson = new Gson();
+                
+                String UID = (String)request.getParameter("UID");
+                
+                java.text.SimpleDateFormat dateFormat = new SimpleDateFormat ( "yyyy-MM-dd HH:mm:ss");
+                java.util.Date time = new java.util.Date();
+                String datetime = dateFormat.format(time);
+                
+                if(header != null){
+                    String master_group_no = "";
+                
+                    List<Map> list = gson.fromJson(header, List.class);
+                    for(int i = 0 ; i < list.size() ; i ++){
+                        Map<String, String> row = getRow(conn, "simbizlocal", "tb_store_master", list.get(i));
+                        master_group_no = row.get("master_group_no");
+                        
+                            if("'T1'".equals(master_group_no)) {
+                               master_group_no = "'" + generateCode(conn, "CC000012") + "'";
+                                }
+                            else if("'T2'".equals(master_group_no)) {
+                                master_group_no = "'" + generateCode(conn, "CC000013") + "'";
+                                }
+                           else if("'T3'".equals(master_group_no)){ 
+                                master_group_no = "'" + generateCode(conn, "CC000014") + "'";
+                                }
+                            else{
+                                throw new Exception("그룹화를 제거한 후 다시 시도해 주십시오.");
+                                }
+                        sql = " update tb_store_master set master_group_no = " + master_group_no + " where master_no = " + row.get("master_no");
+                        logger.info("insert into tb_store");
+                        logger.info(sql);
+                        pstmt = conn.prepareStatement(sql);
+                        pstmt.executeUpdate();                                
+                                
+                        }
+
+                        
+                    }
+
+                PassText =  "그룹화가 완료 되었습니다.";
+                jsonObj.put("result", PassText);
+                PassText = jsonObj.toString();
+                out.write(PassText);
+                out.flush();
+                conn.commit();
+                logger.info("!!!!COMMIT DONE!!!!");
+            
+            
+            }
+            
+            if( type.equals("cust_btn7")){
+                Gson gson = new Gson();
+            
+                String UID = (String)request.getParameter("UID");
+                
+                java.text.SimpleDateFormat dateFormat = new SimpleDateFormat ( "yyyy-MM-dd HH:mm:ss");
+                java.util.Date time = new java.util.Date();
+                String datetime = dateFormat.format(time);
+                
+                String pdf = (String)request.getParameter("pdf");
+                String master_no = (String)request.getParameter("master_no");
+                String columns = getSOrder(conn, "SELECT GROUP_CONCAT(COLUMN_NAME SEPARATOR ', ') AS column_names FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'simbizlocal' AND TABLE_NAME = 'tb_store' ");
+                
+                //check dupplicate
+                //String cnt = getSOrder(conn, " select count(*) as cnt from tb_store where invoice_no = '" + invoice_no + "' and store_status = 'Y' and  store_date is not null ");
+                
+                
+                    sql = "UPDATE tb_store_master SET clp_print_picture = '" + pdf + "'  where master_no = '" + master_no + "'";
+                    logger.info("update tb_store");
+                    logger.info(sql);
+                    pstmt = conn.prepareStatement(sql);
+                    pstmt.executeUpdate();
+                    
+                    
+                    //sql = "insert into tb_store_log(log_type, log_date, log_sr, " + columns + ") ";
+                    //sql += "select 'IU' log_type, now() log_date, 'S' log_sr, " + columns + " ";
+                    //sql += "from tb_store where invoice_no = '" + invoice_no + "'";
+                    //logger.info("insert into tb_store_log");
+                    //pstmt = conn.prepareStatement(sql);
+                    //pstmt.executeUpdate();
+
+                    Map<String, Object> response_data = new HashMap<>();
+                    response_data.put("status", 200);
+                    response_data.put("message", "저장이 완료되었습니다.");
+                    String jsonString = new Gson().toJson(response_data);
+                    out.write(jsonString);
+                    out.flush();
+                    conn.commit();
+            }
+            if( type.equals("cust_btn8")){}
+            if ( type.equals("cust_btn13") ) {
+                
+                
+                Gson gson = new Gson();
+                String columns = getSOrder(conn, "SELECT GROUP_CONCAT(COLUMN_NAME SEPARATOR ', ') AS column_names FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'simbizlocal' AND TABLE_NAME = 'tb_store' ");                
+                
+                String UID = (String)request.getParameter("UID");
+                
+                java.text.SimpleDateFormat dateFormat = new SimpleDateFormat ( "yyyy-MM-dd HH:mm:ss");
+                java.util.Date time = new java.util.Date();
+                String datetime = dateFormat.format(time);
+                String group_no = "";
+                if(header != null){
+                    List<Map> list = gson.fromJson(header, List.class);
+                    for(int i = 0 ; i < list.size() ; i ++){
+                        Map<String, String> row = getRow(conn, "simbizlocal", "tb_store_master", list.get(i));
+
+                        row.put("createuser", "'" + UID + "'");
+                        row.put("createdate", "'" + datetime + "'");
+                        row.put("updateuser", "'" + UID + "'");
+                        row.put("updatedate", "'" + datetime + "'");
+                        //row.put("group_no", "'" + group_no + "'");    
+
+                        Iterator<String> keys = row.keySet().iterator();
+                        while(keys.hasNext()){
+                            String key = keys.next();
+                            
+                            if ( row.get(key) != null) {                        
+                                String value = row.get(key);
+                                if (!sqlCoumns.equals("")) { sqlCoumns += ", "; }
+                                sqlCoumns += key;
+                                if (!sqlValues.equals("")) { sqlValues += ", "; }
+                                sqlValues += value;
+                                // 기본키 제외 duplicate sql 만들기
+		                        // !key.equals("**"), **에 PK + !key.equals("createuser") && !key.equals("createdate")
+                                if (!key.equals("master_no") && !key.equals("createuser") && !key.equals("createdate")) {
+                                    if (!sqlDuplis.equals("")) { sqlDuplis += ", "; }
+                                    sqlDuplis += (key + "=" + value);
+                                }
+                            }
+                        }                        
+                        
+                    
+                        sql = "update tb_store_master set master_group_no = '' ";
+                        sql += ", updateuser = '" + UID + "', updatedate = '" + datetime + "' where master_no = " + row.get("master_no");
+                        
+                        logger.info("update tb_store_master");
+                        logger.info(sql);
+                        pstmt = conn.prepareStatement(sql);
+                        pstmt.executeUpdate();
+                        
+                            sql = "insert into tb_store_log(log_type, log_date, " + columns + ") ";
+                            sql += "select 'IU' log_type, now() log_date, " + columns + " ";
+                            sql += "from tb_store where invoice_no = " + row.get("invoice_no");
+                            logger.info("insert into tb_store_log");
+                            pstmt = conn.prepareStatement(sql);
+                            pstmt.executeUpdate();                        
+                        
+                    }
+                }
+
+                PassText =  "그룹화가 제거 되었습니다.";
+                jsonObj.put("result", PassText);
+                PassText = jsonObj.toString();
+                out.write(PassText);
+                out.flush();
+                conn.commit();
+                logger.info("!!!!COMMIT DONE!!!!");
+            
+            
+            }            
+            if ( type.equals("excel") ) {
+               /* Gson gson = new Gson();
+                
+                String errorMsg = "";
+                
+                String UID = (String)request.getParameter("UID");
+                
+                java.text.SimpleDateFormat dateFormat = new SimpleDateFormat ( "yyyy-MM-dd HH:mm:ss");
+                java.util.Date time = new java.util.Date();
+                String datetime = dateFormat.format(time);
+                
+                int CNT = 0;
+                
+                if(header != null){
+                    List<Map> list = gson.fromJson(header, List.class);
+                    for(int i = 0 ; i < list.size() ; i ++){
+                        Map<String, String> row = getRow(conn, "simbizlocal", "tb_ma_code", list.get(i));
+                        
+                    
+                        String cnt = getSOrder(conn, " select count(*) cnt from tb_ma_code where code_id = " + row.get("code_id")
+                        + " " + "and code = "+ row.get("code") + " ");
+                        
+                        boolean isInsert = false;
+                        if(cnt.equals("0")){
+                            isInsert = true;
+                            
+                            row.put("createuser", "'" + UID + "'");
+                            row.put("createdate", "'" + datetime + "'");
+                            row.put("updateuser", "'" + UID + "'");
+                            row.put("updatedate", "'" + datetime + "'");
+                        }
+                        else {
+                            row.put("updateuser", "'" + UID + "'");
+                            row.put("updatedate", "'" + datetime + "'");
+                        }
+                        
+                        Iterator<String> keys = row.keySet().iterator();
+                        while(keys.hasNext()){
+                            String key = keys.next();
+                            if ( row.get(key) != null) {                        
+                                String value = row.get(key);
+                                if (!isInsert || isInsert && !key.equals("code_id")&& !key.equals("code")) {
+                                    if (!sqlCoumns.equals("")) { sqlCoumns += ", "; }
+                                    sqlCoumns += key;
+                                    if (!sqlValues.equals("")) { sqlValues += ", "; }
+                                    sqlValues += value;
+                                }
+                                // 기본키 제외 duplicate sql 만들기
+                                if (!key.equals("code_id") && !key.equals("code")&& !key.equals("createuser") && !key.equals("createdate")) {
+                                    if (!sqlDuplis.equals("")) { sqlDuplis += ", "; }
+                                    sqlDuplis += (key + "=" + value);
+                                }
+                            }
+                        }
+                        
+                        if(isInsert) {
+                            sql =  " insert into tb_ma_code (" + sqlCoumns + ") VALUES (" + sqlValues + ") ";
+                        }
+                        else {
+                            sql =  " insert into tb_ma_code (" + sqlCoumns + ") VALUES (" + sqlValues + ") on duplicate key update " + sqlDuplis;
+                        }
+                        logger.info("insert into tb_ma_code");
+                        logger.info(sql);
+                        pstmt = conn.prepareStatement(sql);
+                        pstmt.executeUpdate();
+                        CNT++;
+                    }
+                }
+                
+                if(!errorMsg.equals("")) {
+                    throw new Exception(errorMsg);
+                }
+                
+                jsonObj.put("result", "Y");
+                jsonObj.put("CNT", CNT);
+                PassText = jsonObj.toString();
+                out.write(PassText);
+                out.flush();
+                conn.commit();
+                logger.info("!!!!COMMIT DONE!!!!");
+            */}
+            
+             if ( type.equals("get_data") ) {        
+                Gson gson = new Gson();
+                if(header != null){
+                    JSONObject searchValue = new JSONObject(header);
+                    String masterNo = searchValue.getString("masterNo").toString();
+                            String dataSql = "";
+                            dataSql +="select * from tb_store_master ";
+                            dataSql +="WHERE 1 = 1 ";
+                            dataSql +="AND master_no = '"+masterNo+"'";
+                
+                List<Map<String, Object>> data = selectAllQuery(conn,dataSql);
+                Map<String, Object> response_data = new HashMap<>();
+                response_data.put("res", data);
+              String jsonString = new Gson().toJson(response_data);
+              out.print(jsonString);
+        }
+    }
+        } catch (Throwable throwable) {
+            if (conn != null) {
+                conn.rollback();
+                logger.info("!!!!ROLLBACK DONE!!!!");
+            }
+            throw throwable;
+        } finally {
+            if (conn != null) conn.close();
+            if (pstmt != null) pstmt.close();
+        }
+    } catch (Exception e) {
+        out.write("error : " + e.getMessage().toString() + "\n\n" + sql);
+        if (conn != null) conn.close();
+        if (pstmt != null) pstmt.close();
+    }
+%>
